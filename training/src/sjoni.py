@@ -42,7 +42,7 @@ class SjoniConfig:
 
     # Input features
     num_price_features: int = 32        # OHLCV + technical indicators
-    num_sentiment_features: int = 8     # Sentiment scores by source
+    num_sentiment_features: int = 20    # Sentiment features (17 from PriceDerivedSentiment + padding)
     num_institutional_features: int = 12 # Volume patterns, options flow
     num_market_features: int = 16       # VIX, sector indices, breadth
 
@@ -1377,7 +1377,7 @@ def create_sjoni_500m() -> Sjoni:
 
         # Input features
         num_price_features=32,
-        num_sentiment_features=8,
+        num_sentiment_features=20,  # 17 from PriceDerivedSentiment + 3 padding
         num_institutional_features=12,
         num_market_features=16,
 
@@ -1420,7 +1420,7 @@ def create_sjoni_100m() -> Sjoni:
         max_seq_length=252,
         prediction_horizon=5,
         num_price_features=32,
-        num_sentiment_features=8,
+        num_sentiment_features=20,  # 17 from PriceDerivedSentiment + 3 padding
         num_institutional_features=12,
         num_market_features=16,
         num_sectors=11,

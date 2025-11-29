@@ -152,11 +152,14 @@ class SjoniDataset(Dataset):
 
     def _load_price_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """Load price data for a symbol"""
-        # Try different file patterns
+        # Try different file patterns (enhanced first, then historical)
         patterns = [
+            self.data_dir / "enhanced" / f"{symbol}_enhanced.parquet",
+            self.data_dir / f"{symbol}_enhanced.parquet",
+            self.data_dir / "historical" / f"{symbol}_historical.parquet",
+            self.data_dir / f"{symbol}_historical.parquet",
             self.data_dir / "historical" / f"{symbol}_day.parquet",
             self.data_dir / f"{symbol}_day.parquet",
-            self.data_dir / "historical" / f"{symbol}_max.parquet",
         ]
 
         for path in patterns:
@@ -332,10 +335,10 @@ class SjoniDataset(Dataset):
 
     def _compute_stats(self) -> Dict:
         """Compute normalization statistics"""
-        # Collect all feature values
-        price_features = []
-        sentiment_features = []
-        institutional_features = []
+        # Collect feature values by column name (handles varying columns across stocks)
+        price_values = {}
+        sentiment_values = {}
+        institutional_values = {}
 
         for sample in self.samples[:min(len(self.samples), 10000)]:  # Sample subset
             window = sample['window']
@@ -344,29 +347,38 @@ class SjoniDataset(Dataset):
             sent_cols = self._get_sentiment_columns(window)
             inst_cols = self._get_institutional_columns(window)
 
-            if price_cols:
-                price_features.append(window[price_cols].values)
-            if sent_cols:
-                sentiment_features.append(window[sent_cols].values)
-            if inst_cols:
-                institutional_features.append(window[inst_cols].values)
+            for col in price_cols:
+                if col not in price_values:
+                    price_values[col] = []
+                price_values[col].extend(window[col].values.tolist())
+
+            for col in sent_cols:
+                if col not in sentiment_values:
+                    sentiment_values[col] = []
+                sentiment_values[col].extend(window[col].values.tolist())
+
+            for col in inst_cols:
+                if col not in institutional_values:
+                    institutional_values[col] = []
+                institutional_values[col].extend(window[col].values.tolist())
 
         stats = {}
 
-        if price_features:
-            price_all = np.concatenate(price_features, axis=0)
-            stats['price_mean'] = np.nanmean(price_all, axis=0)
-            stats['price_std'] = np.nanstd(price_all, axis=0) + 1e-8
+        # Compute stats per column
+        if price_values:
+            stats['price_cols'] = list(price_values.keys())
+            stats['price_mean'] = np.array([np.nanmean(price_values[c]) for c in stats['price_cols']])
+            stats['price_std'] = np.array([np.nanstd(price_values[c]) + 1e-8 for c in stats['price_cols']])
 
-        if sentiment_features:
-            sent_all = np.concatenate(sentiment_features, axis=0)
-            stats['sentiment_mean'] = np.nanmean(sent_all, axis=0)
-            stats['sentiment_std'] = np.nanstd(sent_all, axis=0) + 1e-8
+        if sentiment_values:
+            stats['sentiment_cols'] = list(sentiment_values.keys())
+            stats['sentiment_mean'] = np.array([np.nanmean(sentiment_values[c]) for c in stats['sentiment_cols']])
+            stats['sentiment_std'] = np.array([np.nanstd(sentiment_values[c]) + 1e-8 for c in stats['sentiment_cols']])
 
-        if institutional_features:
-            inst_all = np.concatenate(institutional_features, axis=0)
-            stats['institutional_mean'] = np.nanmean(inst_all, axis=0)
-            stats['institutional_std'] = np.nanstd(inst_all, axis=0) + 1e-8
+        if institutional_values:
+            stats['institutional_cols'] = list(institutional_values.keys())
+            stats['institutional_mean'] = np.array([np.nanmean(institutional_values[c]) for c in stats['institutional_cols']])
+            stats['institutional_std'] = np.array([np.nanstd(institutional_values[c]) + 1e-8 for c in stats['institutional_cols']])
 
         return stats
 
@@ -386,9 +398,13 @@ class SjoniDataset(Dataset):
 
     def _get_sentiment_columns(self, df: pd.DataFrame) -> List[str]:
         """Get sentiment feature columns"""
+        # All columns from PriceDerivedSentiment
         sent_cols = [
-            'overnight_gap', 'gap_direction', 'close_position', 'bullish_volume',
-            'bearish_volume', 'fear_signal', 'sentiment_proxy', 'sentiment_proxy_smooth'
+            'overnight_gap', 'gap_direction', 'gap_magnitude', 'large_gap_up',
+            'large_gap_down', 'gap_reversal', 'volume_surprise', 'bullish_volume',
+            'bearish_volume', 'range_expansion', 'fear_signal', 'close_position',
+            'excess_return', 'relative_strength', 'momentum_divergence',
+            'sentiment_proxy', 'sentiment_proxy_smooth'
         ]
         return [c for c in sent_cols if c in df.columns]
 
@@ -422,26 +438,36 @@ class SjoniDataset(Dataset):
 
         # Get feature arrays
         price_features = window[price_cols].values if price_cols else np.zeros((len(window), 32))
-        sent_features = window[sent_cols].values if sent_cols else np.zeros((len(window), 8))
+        sent_features = window[sent_cols].values if sent_cols else np.zeros((len(window), 20))
         inst_features = window[inst_cols].values if inst_cols else np.zeros((len(window), 12))
 
-        # Pad to expected dimensions
+        # Pad to expected dimensions (sentiment has 17 features, pad to 20 for alignment)
         price_features = self._pad_features(price_features, 32)
-        sent_features = self._pad_features(sent_features, 8)
+        sent_features = self._pad_features(sent_features, 20)
         inst_features = self._pad_features(inst_features, 12)
         market_features = self._pad_features(
             window[self._get_market_columns(window)].values if self._get_market_columns(window) else np.zeros((len(window), 2)),
             16
         )
 
-        # Normalize using training stats
+        # Normalize using training stats (column-aware)
         if self.stats:
-            if 'price_mean' in self.stats:
-                price_features = (price_features - self.stats['price_mean'][:price_features.shape[1]]) / self.stats['price_std'][:price_features.shape[1]]
-            if 'sentiment_mean' in self.stats:
-                sent_features = (sent_features - self.stats['sentiment_mean'][:sent_features.shape[1]]) / self.stats['sentiment_std'][:sent_features.shape[1]]
-            if 'institutional_mean' in self.stats:
-                inst_features = (inst_features - self.stats['institutional_mean'][:inst_features.shape[1]]) / self.stats['institutional_std'][:inst_features.shape[1]]
+            if 'price_cols' in self.stats:
+                # Map columns to their stats indices
+                for i, col in enumerate(price_cols):
+                    if col in self.stats['price_cols']:
+                        stat_idx = self.stats['price_cols'].index(col)
+                        price_features[:, i] = (price_features[:, i] - self.stats['price_mean'][stat_idx]) / self.stats['price_std'][stat_idx]
+            if 'sentiment_cols' in self.stats:
+                for i, col in enumerate(sent_cols):
+                    if col in self.stats['sentiment_cols']:
+                        stat_idx = self.stats['sentiment_cols'].index(col)
+                        sent_features[:, i] = (sent_features[:, i] - self.stats['sentiment_mean'][stat_idx]) / self.stats['sentiment_std'][stat_idx]
+            if 'institutional_cols' in self.stats:
+                for i, col in enumerate(inst_cols):
+                    if col in self.stats['institutional_cols']:
+                        stat_idx = self.stats['institutional_cols'].index(col)
+                        inst_features[:, i] = (inst_features[:, i] - self.stats['institutional_mean'][stat_idx]) / self.stats['institutional_std'][stat_idx]
 
         # Handle NaN/Inf
         price_features = np.nan_to_num(price_features, nan=0.0, posinf=3.0, neginf=-3.0)
@@ -909,14 +935,33 @@ def get_symbols(data_dir: str) -> List[str]:
     """Get list of available symbols from data directory"""
     symbols = set()
 
+    # Check enhanced directory first (pre-formatted data)
+    enhanced_dir = Path(data_dir) / "enhanced"
+    if enhanced_dir.exists():
+        for f in enhanced_dir.glob("*_enhanced.parquet"):
+            symbol = f.stem.replace("_enhanced", "")
+            if symbol not in ["processing_summary", "market_context"]:
+                symbols.add(symbol)
+
     # Check historical directory
     historical_dir = Path(data_dir) / "historical"
     if historical_dir.exists():
+        for f in historical_dir.glob("*_historical.parquet"):
+            symbol = f.stem.replace("_historical", "")
+            if symbol != "market_context":
+                symbols.add(symbol)
         for f in historical_dir.glob("*_day.parquet"):
             symbol = f.stem.replace("_day", "")
             symbols.add(symbol)
 
     # Check root data directory
+    for f in Path(data_dir).glob("*_historical.parquet"):
+        symbol = f.stem.replace("_historical", "")
+        if symbol != "market_context":
+            symbols.add(symbol)
+    for f in Path(data_dir).glob("*_enhanced.parquet"):
+        symbol = f.stem.replace("_enhanced", "")
+        symbols.add(symbol)
     for f in Path(data_dir).glob("*_day.parquet"):
         symbol = f.stem.replace("_day", "")
         symbols.add(symbol)

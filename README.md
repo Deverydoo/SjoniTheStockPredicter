@@ -2,6 +2,8 @@
 
 *Old Norse: Sjóni (ᛋᛃᚬᚾᛁ) = "The Seer"*
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/deverydoo)
+
 A **547M parameter** Temporal Fusion Transformer for market intelligence. Sjoni sees patterns that others miss by combining 26 years of market data with learned cross-stock relationships.
 
 ---
