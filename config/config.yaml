@@ -1,0 +1,292 @@
+# ============================================================================
+# ArgusTrader Configuration
+# ============================================================================
+# Main configuration file for the trading engine
+# Environment variables can override these values using ${VAR_NAME} syntax
+# ============================================================================
+
+# Application metadata
+app:
+  name: "ArgusTrader"
+  version: "1.0.0"
+  environment: "development"  # development | staging | production
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+logging:
+  level: "INFO"  # TRACE | DEBUG | INFO | WARN | ERROR | CRITICAL
+  format: "[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] %v"
+  outputs:
+    console:
+      enabled: true
+      colored: true
+    file:
+      enabled: true
+      path: "${LOG_DIR:./logs}/argus.log"
+      max_size_mb: 100
+      max_files: 10
+      rotation: "daily"
+
+# ============================================================================
+# Market Data Configuration
+# ============================================================================
+market_data:
+  # Primary data source
+  primary:
+    provider: "polygon"
+    api_key: "${POLYGON_API_KEY}"
+    websocket_url: "wss://socket.polygon.io/stocks"
+    rest_url: "https://api.polygon.io"
+    subscriptions:
+      - "T.*"      # All trades
+      - "Q.*"      # All quotes
+      - "AM.*"     # Minute aggregates
+    buffer_size: 1000000
+    reconnect_delay_ms: 1000
+    max_reconnect_attempts: 10
+
+  # Secondary/backup data source
+  secondary:
+    provider: "alpaca"
+    api_key: "${ALPACA_API_KEY}"
+    secret_key: "${ALPACA_SECRET_KEY}"
+    paper: true
+    data_url: "https://data.alpaca.markets"
+    trading_url: "https://paper-api.alpaca.markets"
+
+# ============================================================================
+# Stock Screener Configuration
+# ============================================================================
+screener:
+  # Universe filtering
+  universe:
+    max_size: 500
+    min_market_cap: 1000000000    # $1B
+    min_avg_volume: 500000        # 500K shares/day
+    min_price: 5.0                # $5 minimum
+    max_spread_pct: 0.5           # 0.5% max spread
+    nasdaq_only: true
+    exclude_adrs: true
+    exclude_etfs: false
+
+  # Top N selection
+  top_n: 20
+
+  # Factor weights
+  weights:
+    momentum: 0.40
+    volume: 0.20
+    volatility: 0.15
+    sentiment: 0.25
+
+  # Update frequencies (milliseconds)
+  update_intervals:
+    factor_scores: 60000      # 1 minute
+    rankings: 300000          # 5 minutes
+    sentiment: 900000         # 15 minutes
+    universe: 86400000        # Daily
+
+# ============================================================================
+# Prediction Engine Configuration
+# ============================================================================
+predictor:
+  # Model paths
+  models:
+    tft:
+      engine_path: "${MODEL_DIR:./models}/tensorrt/tft_predictor.engine"
+      onnx_path: "${MODEL_DIR:./models}/onnx/tft_predictor.onnx"
+    finbert:
+      engine_path: "${MODEL_DIR:./models}/tensorrt/finbert.engine"
+      tokenizer_path: "${MODEL_DIR:./models}/tokenizers/finbert"
+
+  # Inference configuration
+  inference:
+    batch_size: 32
+    use_fp16: true
+    use_int8: false
+    max_sequence_length: 60
+    prediction_horizon: 12
+
+  # Feature engineering
+  features:
+    sequence_length: 60
+    num_features: 32
+    technical_indicators:
+      - sma_10
+      - sma_20
+      - ema_12
+      - ema_26
+      - rsi_14
+      - macd
+      - macd_signal
+      - bollinger_upper
+      - bollinger_lower
+      - atr_14
+      - obv
+      - vwap
+
+# ============================================================================
+# Sentiment Analysis Configuration
+# ============================================================================
+sentiment:
+  # News sources
+  sources:
+    newsapi:
+      enabled: true
+      api_key: "${NEWSAPI_KEY}"
+      poll_interval_ms: 60000
+    benzinga:
+      enabled: false
+      api_key: "${BENZINGA_API_KEY:}"
+
+  # Aggregation settings
+  aggregation:
+    lookback_hours: 24
+    decay_half_life_hours: 6.0
+    source_weights:
+      reuters: 1.0
+      bloomberg: 1.0
+      wsj: 0.95
+      cnbc: 0.85
+      benzinga: 0.80
+      seekingalpha: 0.70
+      motleyfool: 0.60
+      unknown: 0.50
+
+# ============================================================================
+# Signal Fusion Configuration
+# ============================================================================
+fusion:
+  # Default weights (adjusted by market regime)
+  default_weights:
+    technical: 0.35
+    prediction: 0.40
+    sentiment: 0.25
+
+  # Market regime adjustments
+  regime_weights:
+    trending:
+      technical: 0.30
+      prediction: 0.50
+      sentiment: 0.20
+    mean_reverting:
+      technical: 0.50
+      prediction: 0.30
+      sentiment: 0.20
+    high_volatility:
+      technical: 0.25
+      prediction: 0.25
+      sentiment: 0.50
+    low_volatility:
+      technical: 0.40
+      prediction: 0.40
+      sentiment: 0.20
+
+  # Signal thresholds
+  thresholds:
+    strong_buy: 0.7
+    buy: 0.3
+    sell: -0.3
+    strong_sell: -0.7
+
+# ============================================================================
+# Risk Management Configuration
+# ============================================================================
+risk:
+  # Position limits
+  position:
+    max_pct: 0.10               # 10% max per position
+    max_value: 50000            # $50K absolute max
+    max_positions: 20
+
+  # Portfolio limits
+  portfolio:
+    max_sector_exposure: 0.30   # 30% max per sector
+    max_total_exposure: 0.80    # 80% max invested
+    min_cash_reserve: 0.20      # 20% minimum cash
+
+  # Loss limits
+  loss:
+    daily_limit_pct: 0.02       # 2% max daily loss
+    position_stop_loss_pct: 0.05  # 5% stop loss
+    trailing_stop_pct: 0.03     # 3% trailing stop
+
+  # Volatility adjustments
+  volatility:
+    vix_threshold: 30
+    high_vix_reduction: 0.50    # Reduce positions 50% when VIX > 30
+
+  # Circuit breaker
+  circuit_breaker:
+    failure_threshold: 5
+    cooldown_seconds: 300
+
+# ============================================================================
+# Database Configuration
+# ============================================================================
+database:
+  timescaledb:
+    host: "${DB_HOST:localhost}"
+    port: ${DB_PORT:5432}
+    user: "${DB_USER:argus}"
+    password: "${DB_PASSWORD}"
+    database: "${DB_NAME:argus_trader}"
+    pool_size: 10
+    connection_timeout_ms: 5000
+
+  redis:
+    host: "${REDIS_HOST:localhost}"
+    port: ${REDIS_PORT:6379}
+    password: "${REDIS_PASSWORD:}"
+    database: ${REDIS_DB:0}
+    pool_size: 10
+
+# ============================================================================
+# Communication Configuration
+# ============================================================================
+communication:
+  zeromq:
+    publisher:
+      endpoint: "${ZMQ_PUB_ENDPOINT:tcp://*:5555}"
+      high_water_mark: 10000
+    subscriber:
+      endpoint: "${ZMQ_SUB_ENDPOINT:tcp://*:5556}"
+      high_water_mark: 10000
+
+# ============================================================================
+# Dashboard Configuration
+# ============================================================================
+dashboard:
+  host: "${DASH_HOST:0.0.0.0}"
+  port: ${DASH_PORT:8050}
+  debug: ${DASH_DEBUG:false}
+  update_intervals:
+    fast_ms: 1000      # Price updates
+    slow_ms: 5000      # Rankings updates
+    news_ms: 30000     # News updates
+
+# ============================================================================
+# Performance Tuning
+# ============================================================================
+performance:
+  # Thread pool sizes
+  threads:
+    market_data: 2
+    inference: 4
+    database: 2
+    general: 4
+
+  # Memory settings
+  memory:
+    preallocate_buffers: true
+    buffer_size_mb: 256
+
+  # Latency targets (microseconds)
+  latency_targets:
+    market_data_ingestion: 100
+    screening_update: 1000
+    price_prediction: 500
+    sentiment_scoring: 5000
+    signal_fusion: 100
+    end_to_end: 10000
